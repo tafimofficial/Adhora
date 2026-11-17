@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pitch_black">#000000</color>
+    <color name="pitch_dark">#0A0D0B</color>
+    <color name="surface_dark">#121614</color>
+    <color name="surface_card">#171D19</color>
+    <color name="border_dark">#222B25</color>
+    
+    <color name="electric_lime">#A6FF00</color>
+    <color name="lime_neon">#00FF66</color>
+    <color name="lime_dim">#1C3D24</color>
+    <color name="lime_glow">#40A6FF00</color>
+
+    <color name="text_primary">#F0FFF4</color>
+    <color name="text_secondary">#8CA893</color>
+    <color name="text_muted">#4E6354</color>
+</resources>

@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Kotlin
+.kotlin/
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+local.properties
+.DS_Store
+
+# Temporary screenshots & testing artifacts
+verify_*.png
+check_screen.png
+
+# Rust build artifacts
+rust_core/target/
+
+# Secret tokens / temporary cache
+cache/
+*.keystore
+*.jks
