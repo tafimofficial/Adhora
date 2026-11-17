@@ -161,7 +161,12 @@ fn handle_stream(
     let (start, end) = parse_range(range_header.as_deref(), total_size);
     let content_length = if end >= start { end - start + 1 } else { 0 };
 
-    let (tx, rx) = sync_channel::<Result<Vec<u8>, std::io::Error>>(4);
+    if content_length == 0 {
+        let _ = request.respond(Response::empty(StatusCode(416)));
+        return;
+    }
+
+    let (tx, rx) = sync_channel::<Result<Vec<u8>, std::io::Error>>(2);
     let client_opt = runtime.block_on(async {
         let lock = state.client.lock().await;
         lock.clone()
@@ -175,7 +180,14 @@ fn handle_stream(
         }
     };
 
-    let chunk_size = 512 * 1024; // 512 KB MTProto chunk
+    // Adaptive chunk size:
+    // Small ranges (e.g. metadata / moov atom <= 128KB) download in 128KB chunks for instant response;
+    // larger ranges download in 512KB chunks for high throughput.
+    let chunk_size: usize = if content_length <= 128 * 1024 {
+        128 * 1024
+    } else {
+        512 * 1024
+    };
     let start_chunk = (start / chunk_size) as i32;
     let first_skip = start % chunk_size;
 
@@ -229,19 +241,39 @@ fn handle_stream(
 }
 
 fn parse_range(range_header: Option<&str>, total_size: usize) -> (usize, usize) {
+    if total_size == 0 {
+        return (0, 0);
+    }
+    let max_index = total_size.saturating_sub(1);
     if let Some(header) = range_header {
         let trimmed = header.trim();
         if let Some(stripped) = trimmed.strip_prefix("bytes=") {
-            let mut parts = stripped.split('-');
-            let start = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-            let end = parts
-                .next()
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(total_size.saturating_sub(1));
-            return (start, end.min(total_size.saturating_sub(1)));
+            let parts: Vec<&str> = stripped.split('-').collect();
+            if parts.len() == 2 {
+                let p0 = parts[0].trim();
+                let p1 = parts[1].trim();
+
+                if p0.is_empty() && !p1.is_empty() {
+                    // Suffix range: bytes=-500 (the last 500 bytes of the file)
+                    if let Ok(suffix) = p1.parse::<usize>() {
+                        let start = total_size.saturating_sub(suffix);
+                        return (start, max_index);
+                    }
+                } else if !p0.is_empty() && p1.is_empty() {
+                    // Open-ended range: bytes=1000- (from 1000 to end of file)
+                    if let Ok(start) = p0.parse::<usize>() {
+                        return (start.min(max_index), max_index);
+                    }
+                } else if !p0.is_empty() && !p1.is_empty() {
+                    // Closed range: bytes=1000-2000
+                    if let (Ok(start), Ok(end)) = (p0.parse::<usize>(), p1.parse::<usize>()) {
+                        return (start.min(max_index), end.min(max_index));
+                    }
+                }
+            }
         }
     }
-    (0, total_size.saturating_sub(1))
+    (0, max_index)
 }
 
 struct StreamChannelReader {

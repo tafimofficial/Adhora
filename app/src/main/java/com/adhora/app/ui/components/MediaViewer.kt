@@ -67,17 +67,18 @@ fun FullscreenMediaViewer(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1,
+            beyondViewportPageCount = 0,
             userScrollEnabled = true
         ) { page ->
             val item = mediaList.getOrNull(page)
             if (item != null) {
                 if (item.mediaType == "video") {
                     // Instant video streaming via Rust engine HTTP proxy
+                    val isCurrentPage = pagerState.currentPage == page
                     VideoStreamPlayer(
                         videoUrl = item.streamUrl,
                         modifier = Modifier.fillMaxSize(),
-                        autoPlay = pagerState.currentPage == page,
+                        isActive = isCurrentPage,
                         isUiVisible = isUiVisible,
                         onToggleUi = { isUiVisible = !isUiVisible },
                         bottomPadding = if (item.caption.isNotBlank()) 95.dp else 55.dp

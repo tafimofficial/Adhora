@@ -56,6 +56,7 @@ pub struct AppState {
     pub password_token: Arc<Mutex<Option<PasswordToken>>>,
     pub cached_peers: Arc<Mutex<HashMap<i64, PeerRef>>>,
     pub cached_dialogs: Arc<Mutex<Vec<DialogDto>>>,
+    pub cached_media_targets: Arc<Mutex<HashMap<(i64, i32), (usize, String, crate::tg::StreamTarget)>>>,
 }
 
 impl AppState {
@@ -69,6 +70,7 @@ impl AppState {
             password_token: Arc::new(Mutex::new(None)),
             cached_peers: Arc::new(Mutex::new(HashMap::new())),
             cached_dialogs: Arc::new(Mutex::new(Vec::new())),
+            cached_media_targets: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

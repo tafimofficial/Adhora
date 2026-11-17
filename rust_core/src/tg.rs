@@ -10,6 +10,7 @@ use grammers_tl_types as tl;
 
 use crate::state::{AppState, AuthResponse, DialogDto, MediaDto};
 
+#[derive(Clone)]
 pub enum StreamTarget {
     Doc(grammers_client::media::Document),
     Photo(grammers_client::media::Photo),
@@ -598,6 +599,14 @@ pub async fn get_media_stream_info(
     chat_id: i64,
     msg_id: i32,
 ) -> (Result<(usize, String), String>, Option<StreamTarget>) {
+    // 1. Fast in-memory target cache check (0ms response for repeated Range requests)
+    {
+        let cache_lock = state.cached_media_targets.lock().await;
+        if let Some((size, mime, target)) = cache_lock.get(&(chat_id, msg_id)) {
+            return (Ok((*size, mime.clone())), Some(target.clone()));
+        }
+    }
+
     let client = match get_or_create_client(state, 2040).await {
         Ok(c) => c,
         Err(e) => return (Err(format!("Client error: {}", e)), None),
@@ -626,11 +635,22 @@ pub async fn get_media_stream_info(
             Media::Document(doc) => {
                 let size = doc.size().unwrap_or(0);
                 let mime = doc.mime_type().unwrap_or("video/mp4").to_string();
-                return (Ok((size, mime)), Some(StreamTarget::Doc(doc)));
+                let target = StreamTarget::Doc(doc);
+                {
+                    let mut cache_lock = state.cached_media_targets.lock().await;
+                    cache_lock.insert((chat_id, msg_id), (size, mime.clone(), target.clone()));
+                }
+                return (Ok((size, mime)), Some(target));
             }
             Media::Photo(photo) => {
                 let size = photo.thumbs().iter().map(|t| t.size()).max().unwrap_or(0);
-                return (Ok((size, "image/jpeg".to_string())), Some(StreamTarget::Photo(photo)));
+                let mime = "image/jpeg".to_string();
+                let target = StreamTarget::Photo(photo);
+                {
+                    let mut cache_lock = state.cached_media_targets.lock().await;
+                    cache_lock.insert((chat_id, msg_id), (size, mime.clone(), target.clone()));
+                }
+                return (Ok((size, mime)), Some(target));
             }
             _ => {}
         }

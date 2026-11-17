@@ -27,9 +27,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.adhora.app.ui.theme.ElectricLime
@@ -42,13 +46,14 @@ import kotlinx.coroutines.delay
 fun VideoStreamPlayer(
     videoUrl: String,
     modifier: Modifier = Modifier,
-    autoPlay: Boolean = true,
+    isActive: Boolean = true,
     isUiVisible: Boolean = true,
     onToggleUi: () -> Unit = {},
     bottomPadding: Dp = 80.dp
 ) {
     val context = LocalContext.current
-    var isPlaying by remember { mutableStateOf(autoPlay) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isPlaying by remember { mutableStateOf(isActive) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -58,29 +63,76 @@ fun VideoStreamPlayer(
     var seekSide by remember { mutableIntStateOf(0) }
     val currentOnToggleUi by rememberUpdatedState(onToggleUi)
 
+    // Ultra-optimized streaming LoadControl:
+    // - bufferForPlaybackMs = 500: Starts playing as soon as 0.5s is loaded (YouTube-like fast start)
+    // - maxBufferMs = 6000: Buffers max 6s ahead so it does not waste mobile data on large videos
     val exoPlayer = remember(videoUrl) {
-        ExoPlayer.Builder(context).build().apply {
-            val mediaItem = MediaItem.fromUri(videoUrl)
-            setMediaItem(mediaItem)
-            prepare()
-            playWhenReady = autoPlay
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    isBuffering = playbackState == Player.STATE_BUFFERING
-                    if (playbackState == Player.STATE_READY) {
-                        duration = this@apply.duration.coerceAtLeast(0L)
-                    }
-                }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 1500,
+                /* maxBufferMs = */ 6000,
+                /* bufferForPlaybackMs = */ 500,
+                /* bufferForPlaybackAfterRebufferMs = */ 1000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
 
-                override fun onIsPlayingChanged(playing: Boolean) {
-                    isPlaying = playing
-                }
-            })
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                val mediaItem = MediaItem.fromUri(videoUrl)
+                setMediaItem(mediaItem)
+                prepare()
+                playWhenReady = isActive
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        isBuffering = playbackState == Player.STATE_BUFFERING
+                        if (playbackState == Player.STATE_READY) {
+                            duration = this@apply.duration.coerceAtLeast(0L)
+                        }
+                    }
+
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        isPlaying = playing
+                    }
+                })
+            }
+    }
+
+    // Stop playback and background streaming immediately when user swipes away or page is inactive!
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            exoPlayer.pause()
+            exoPlayer.playWhenReady = false
+        } else {
+            exoPlayer.playWhenReady = true
+            exoPlayer.play()
         }
     }
 
+    // Pause audio/video when screen locks or app goes to background
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                exoPlayer.pause()
+                exoPlayer.playWhenReady = false
+            } else if (event == Lifecycle.Event.ON_RESUME && isActive) {
+                exoPlayer.playWhenReady = true
+                exoPlayer.play()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Complete cleanup on disposal
     DisposableEffect(videoUrl) {
         onDispose {
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
             exoPlayer.release()
         }
     }
